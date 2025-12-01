@@ -32,7 +32,7 @@ php artisan vendor:publish --tag=flutterwave-config
 ### 4. Add to .env
 
 ```env
-FLUTTERWAVE_PUBLIC_KEY=your_test_public_key
+FLUTTERWAVE_CLIENT_KEY=your_test_client_key
 FLUTTERWAVE_SECRET_KEY=your_test_secret_key
 FLUTTERWAVE_ENVIRONMENT=test
 ```

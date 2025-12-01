@@ -73,8 +73,8 @@ class FlutterwaveService
             throw new FlutterwaveException('Flutterwave secret key is required');
         }
 
-        if (empty($config['public_key'])) {
-            throw new FlutterwaveException('Flutterwave public key is required');
+        if (empty($config['client_key'])) {
+            throw new FlutterwaveException('Flutterwave client key is required');
         }
     }
 

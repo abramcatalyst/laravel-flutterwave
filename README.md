@@ -84,7 +84,7 @@ php artisan vendor:publish --tag=flutterwave-config
 Add your Flutterwave credentials to your `.env` file:
 
 ```env
-FLUTTERWAVE_PUBLIC_KEY=your_public_key
+FLUTTERWAVE_CLIENT_KEY=your_client_key
 FLUTTERWAVE_SECRET_KEY=your_secret_key
 FLUTTERWAVE_ENCRYPTION_KEY=your_encryption_key
 FLUTTERWAVE_WEBHOOK_SECRET_HASH=your_webhook_secret_hash

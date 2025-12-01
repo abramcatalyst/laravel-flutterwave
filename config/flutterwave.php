@@ -3,14 +3,14 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Flutterwave Public Key
+    | Flutterwave Client Key
     |--------------------------------------------------------------------------
     |
-    | Your Flutterwave public key from your dashboard.
+    | Your Flutterwave client key from your dashboard.
     | Get it from: https://dashboard.flutterwave.com/settings/apis
     |
     */
-    'public_key' => env('FLUTTERWAVE_PUBLIC_KEY', ''),
+    'client_key' => env('FLUTTERWAVE_CLIENT_KEY', ''),
 
     /*
     |--------------------------------------------------------------------------
