@@ -12,6 +12,8 @@ A comprehensive Flutterwave payment gateway package for Laravel 9.x, 10.x, 11.x,
 - 🏦 **Virtual Accounts** - Create and manage virtual accounts
 - 📊 **Transaction Tracking** - Optional database models and migrations
 - 🛡️ **Security** - Built-in webhook signature verification
+- 🔐 **API Version Support** - Supports both Flutterwave API v3 and v4 (with OAuth 2.0)
+- 🌐 **Live & Test Environments** - Seamless switching between live and test modes
 
 ## Installation
 
@@ -84,14 +86,26 @@ php artisan vendor:publish --tag=flutterwave-config
 Add your Flutterwave credentials to your `.env` file:
 
 ```env
-FLUTTERWAVE_CLIENT_KEY=your_client_key
+FLUTTERWAVE_PUBLIC_KEY=your_public_key
 FLUTTERWAVE_SECRET_KEY=your_secret_key
 FLUTTERWAVE_ENCRYPTION_KEY=your_encryption_key
 FLUTTERWAVE_WEBHOOK_SECRET_HASH=your_webhook_secret_hash
-FLUTTERWAVE_ENVIRONMENT=test
+FLUTTERWAVE_ENVIRONMENT=live
+FLUTTERWAVE_API_VERSION=v3
 FLUTTERWAVE_DEFAULT_CURRENCY=NGN
 FLUTTERWAVE_DEFAULT_COUNTRY=NG
 ```
+
+### API Version Support
+
+This package supports both Flutterwave API v3 and v4:
+
+- **v3 (Default)**: Uses Bearer token authentication with your secret key
+- **v4**: Uses OAuth 2.0 authentication (automatically handles token retrieval and refresh)
+
+Set `FLUTTERWAVE_API_VERSION=v3` or `FLUTTERWAVE_API_VERSION=v4` in your `.env` file.
+
+**Note**: Some endpoints (like `/banks`) are only available in v3. The package defaults to v3 for maximum compatibility.
 
 ## Optional: Database Models and Migrations
 

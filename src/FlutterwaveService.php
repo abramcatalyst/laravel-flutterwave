@@ -4,6 +4,7 @@ namespace AbramCatalyst\Flutterwave;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Exception\RequestException;
 use Illuminate\Support\Facades\Log;
 use AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException;
 use AbramCatalyst\Flutterwave\Services\PaymentService;
@@ -37,6 +38,20 @@ class FlutterwaveService
     protected $baseUrl;
 
     /**
+     * The OAuth access token (for v4 API).
+     *
+     * @var string|null
+     */
+    protected $accessToken;
+
+    /**
+     * The timestamp when the access token expires.
+     *
+     * @var int|null
+     */
+    protected $tokenExpiresAt;
+
+    /**
      * Create a new Flutterwave service instance.
      *
      * @param  array  $config
@@ -50,12 +65,17 @@ class FlutterwaveService
         $this->config = $config;
         $this->baseUrl = $this->getBaseUrl();
         
+        // Initialize client - authentication will be handled per request
         $this->client = new Client([
             'base_uri' => $this->baseUrl,
             'timeout' => $config['timeout'] ?? 30,
+            'connect_timeout' => 10,
             'headers' => [
-                'Authorization' => 'Bearer ' . $config['secret_key'],
                 'Content-Type' => 'application/json',
+            ],
+            'curl' => [
+                CURLOPT_DNS_CACHE_TIMEOUT => 3600, // Cache DNS for 1 hour
+                CURLOPT_RESOLVE => [], // Will be set per request if needed
             ],
         ]);
     }
@@ -73,8 +93,8 @@ class FlutterwaveService
             throw new FlutterwaveException('Flutterwave secret key is required');
         }
 
-        if (empty($config['client_key'])) {
-            throw new FlutterwaveException('Flutterwave client key is required');
+        if (empty($config['public_key'])) {
+            throw new FlutterwaveException('Flutterwave public key is required');
         }
     }
 
@@ -89,9 +109,57 @@ class FlutterwaveService
             return $this->config['base_url'];
         }
 
-        return $this->config['environment'] === 'live'
-            ? 'https://api.flutterwave.com/v3/'
-            : 'https://api.flutterwave.com/v3/';
+        // Check if API version is specified in config, default to v3 for compatibility
+        $apiVersion = $this->config['api_version'] ?? 'v3';
+        
+        // Both live and test use the same base URL, environment affects authentication
+        return "https://api.flutterwave.com/{$apiVersion}/";
+    }
+
+    /**
+     * Get OAuth 2.0 access token for v4 API.
+     *
+     * @return string
+     * @throws \AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException
+     */
+    protected function getAccessToken(): string
+    {
+        // Return cached token if still valid
+        if ($this->accessToken && $this->tokenExpiresAt && time() < $this->tokenExpiresAt) {
+            return $this->accessToken;
+        }
+
+        try {
+            $oauthClient = new Client([
+                'base_uri' => 'https://idp.flutterwave.com/',
+                'timeout' => $this->config['timeout'] ?? 30,
+            ]);
+
+            $response = $oauthClient->post('realms/flutterwave/protocol/openid-connect/token', [
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ],
+                'form_params' => [
+                    'client_id' => trim($this->config['public_key']),
+                    'client_secret' => trim($this->config['secret_key']),
+                    'grant_type' => 'client_credentials',
+                ],
+            ]);
+
+            $body = json_decode($response->getBody()->getContents(), true);
+
+            if (!isset($body['access_token'])) {
+                throw new FlutterwaveException('Failed to obtain access token: ' . ($body['error_description'] ?? 'Unknown error'));
+            }
+
+            $this->accessToken = $body['access_token'];
+            // Token expires in 10 minutes, but we'll refresh 1 minute early
+            $this->tokenExpiresAt = time() + ($body['expires_in'] ?? 600) - 60;
+
+            return $this->accessToken;
+        } catch (GuzzleException $e) {
+            throw new FlutterwaveException('Failed to authenticate with Flutterwave: ' . $e->getMessage(), 0, $e);
+        }
     }
 
     /**
@@ -216,13 +284,33 @@ class FlutterwaveService
             // Sanitize endpoint to prevent path traversal and SSRF
             $endpoint = $this->sanitizeEndpoint($endpoint);
 
+            // Get authentication token (OAuth 2.0 for v4, Bearer token for v3)
+            $isV4 = strpos($this->baseUrl, '/v4/') !== false;
+            if (!isset($options['headers'])) {
+                $options['headers'] = [];
+            }
+            
+            if ($isV4) {
+                $accessToken = $this->getAccessToken();
+                $options['headers']['Authorization'] = 'Bearer ' . $accessToken;
+            } else {
+                $options['headers']['Authorization'] = 'Bearer ' . trim($this->config['secret_key']);
+            }
+
             if ($this->config['log_requests'] ?? false) {
                 // Sanitize sensitive data before logging
                 $sanitizedOptions = $this->sanitizeLogData($options);
                 
+                // Log the full URL and auth header info (without exposing the full key)
+                $fullUrl = rtrim($this->baseUrl, '/') . '/' . ltrim($endpoint, '/');
+                $authHeader = $options['headers']['Authorization'] ?? 'Not set';
+                $authKeyPreview = substr($authHeader, 0, 20) . '...' . substr($authHeader, -10);
+                
                 Log::info('Flutterwave API Request', [
                     'method' => $method,
                     'endpoint' => $endpoint,
+                    'full_url' => $fullUrl,
+                    'auth_header_preview' => $authKeyPreview,
                     'options' => $sanitizedOptions,
                 ]);
             }
@@ -249,17 +337,29 @@ class FlutterwaveService
 
             return $body;
         } catch (GuzzleException $e) {
-            // Don't expose sensitive error details
-            $message = 'Flutterwave API request failed';
+            // Log the full error for debugging
+            if ($this->config['log_requests'] ?? false) {
+                Log::error('Flutterwave API Error', [
+                    'exception' => get_class($e),
+                    'message' => $e->getMessage(),
+                    'code' => $e->getCode(),
+                    'endpoint' => $endpoint,
+                ]);
+            }
             
-            if ($e->hasResponse()) {
+            // Only RequestException and its subclasses have responses
+            // ConnectException (network/DNS issues) doesn't have a response
+            if ($e instanceof RequestException && $e->hasResponse()) {
                 $response = $e->getResponse();
                 $statusCode = $response->getStatusCode();
+                $message = 'Flutterwave API request failed';
                 
                 try {
                     $body = json_decode($response->getBody()->getContents(), true);
                     if (isset($body['message']) && !empty($body['message'])) {
                         $message = $body['message'];
+                    } elseif (isset($body['data']['message'])) {
+                        $message = $body['data']['message'];
                     }
                 } catch (\Exception $ex) {
                     // If we can't parse the response, use generic message
@@ -268,7 +368,20 @@ class FlutterwaveService
                 throw new FlutterwaveException($message, $statusCode, $e);
             }
 
-            throw new FlutterwaveException($message, $e->getCode(), $e);
+            // For connection errors or other exceptions without response
+            $errorMessage = $e->getMessage();
+            $code = method_exists($e, 'getCode') ? $e->getCode() : 0;
+            
+            // Provide more helpful error messages for common connection issues
+            if (strpos($errorMessage, 'cURL error') !== false || 
+                strpos($errorMessage, 'Connection') !== false ||
+                strpos($errorMessage, 'timeout') !== false) {
+                $message = "Flutterwave API connection failed: {$errorMessage}. Please check your network connection and API endpoint.";
+            } else {
+                $message = "Flutterwave API request failed: {$errorMessage}";
+            }
+            
+            throw new FlutterwaveException($message, $code, $e);
         }
     }
 

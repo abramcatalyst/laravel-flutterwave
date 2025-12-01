@@ -97,8 +97,8 @@ class AccountVerificationService
      */
     public function getBanks(?string $country = null): array
     {
-        $query = $country ? ['country' => $country] : [];
-        return $this->flutterwave->get('banks', $query);
+        $endpoint = $country ? "banks/{$country}" : 'banks';
+        return $this->flutterwave->get($endpoint);
     }
 
     /**

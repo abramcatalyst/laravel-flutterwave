@@ -3,14 +3,14 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Flutterwave Client Key
+    | Flutterwave Public Key
     |--------------------------------------------------------------------------
     |
-    | Your Flutterwave client key from your dashboard.
-    | Get it from: https://dashboard.flutterwave.com/settings/apis
+    | Your Flutterwave public key from your dashboard.
+    | Get it from: https://app.flutterwave.com/dashboard/settings/apis/live
     |
     */
-    'client_key' => env('FLUTTERWAVE_CLIENT_KEY', ''),
+    'public_key' => trim(env('FLUTTERWAVE_PUBLIC_KEY', '')),
 
     /*
     |--------------------------------------------------------------------------
@@ -21,7 +21,7 @@ return [
     | Get it from: https://dashboard.flutterwave.com/settings/apis
     |
     */
-    'secret_key' => env('FLUTTERWAVE_SECRET_KEY', ''),
+    'secret_key' => trim(env('FLUTTERWAVE_SECRET_KEY', '')),
 
     /*
     |--------------------------------------------------------------------------
@@ -32,7 +32,7 @@ return [
     | Get it from: https://dashboard.flutterwave.com/settings/apis
     |
     */
-    'encryption_key' => env('FLUTTERWAVE_ENCRYPTION_KEY', ''),
+    'encryption_key' => trim(env('FLUTTERWAVE_ENCRYPTION_KEY', '')),
 
     /*
     |--------------------------------------------------------------------------
@@ -43,7 +43,7 @@ return [
     | Get it from: https://dashboard.flutterwave.com/settings/webhooks
     |
     */
-    'webhook_secret_hash' => env('FLUTTERWAVE_WEBHOOK_SECRET_HASH', ''),
+    'webhook_secret_hash' => trim(env('FLUTTERWAVE_WEBHOOK_SECRET_HASH', '')),
 
     /*
     |--------------------------------------------------------------------------
@@ -53,14 +53,27 @@ return [
     | Set to 'live' for production or 'test' for testing.
     |
     */
-    'environment' => env('FLUTTERWAVE_ENVIRONMENT', 'test'),
+    'environment' => env('FLUTTERWAVE_ENVIRONMENT', 'live'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | API Version
+    |--------------------------------------------------------------------------
+    |
+    | Flutterwave API version to use (v3 or v4).
+    | Note: v4 uses OAuth 2.0 authentication, v3 uses Bearer token.
+    | Some endpoints may only be available in v3.
+    |
+    */
+    'api_version' => env('FLUTTERWAVE_API_VERSION', 'v3'),
 
     /*
     |--------------------------------------------------------------------------
     | Base URL
     |--------------------------------------------------------------------------
     |
-    | Flutterwave API base URL. Automatically set based on environment.
+    | Flutterwave API base URL. Automatically set based on environment and API version.
+    | Set this to override the default base URL.
     |
     */
     'base_url' => env('FLUTTERWAVE_BASE_URL', null),

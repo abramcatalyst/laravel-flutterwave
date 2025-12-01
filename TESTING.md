@@ -49,11 +49,12 @@ php artisan vendor:publish --tag=flutterwave-config
 Add to your `.env` file:
 
 ```env
-FLUTTERWAVE_CLIENT_KEY=FLWPUBK_TEST-xxxxxxxxxxxxx
+FLUTTERWAVE_PUBLIC_KEY=FLWPUBK_TEST-xxxxxxxxxxxxx
 FLUTTERWAVE_SECRET_KEY=FLWSECK_TEST-xxxxxxxxxxxxx
 FLUTTERWAVE_ENCRYPTION_KEY=xxxxxxxxxxxxx
 FLUTTERWAVE_WEBHOOK_SECRET_HASH=your_webhook_secret_hash
 FLUTTERWAVE_ENVIRONMENT=test
+FLUTTERWAVE_API_VERSION=v3
 FLUTTERWAVE_DEFAULT_CURRENCY=NGN
 FLUTTERWAVE_DEFAULT_COUNTRY=NG
 FLUTTERWAVE_LOG_REQUESTS=true
@@ -72,7 +73,7 @@ php artisan tinker
 app('flutterwave');
 
 // Check config
-config('flutterwave.client_key');
+config('flutterwave.public_key');
 
 // Should return your public key
 ```
