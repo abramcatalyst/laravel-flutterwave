@@ -52,6 +52,20 @@ class FlutterwaveService
     protected $tokenExpiresAt;
 
     /**
+     * The OAuth client instance (reused for performance).
+     *
+     * @var \GuzzleHttp\Client|null
+     */
+    protected $oauthClient;
+
+    /**
+     * Cached service instances.
+     *
+     * @var array
+     */
+    protected $serviceCache = [];
+
+    /**
      * Create a new Flutterwave service instance.
      *
      * @param  array  $config
@@ -66,6 +80,7 @@ class FlutterwaveService
         $this->baseUrl = $this->getBaseUrl();
         
         // Initialize client - authentication will be handled per request
+        // Optimized for connection reuse and HTTP/2 support
         $this->client = new Client([
             'base_uri' => $this->baseUrl,
             'timeout' => $config['timeout'] ?? 30,
@@ -76,6 +91,15 @@ class FlutterwaveService
             'curl' => [
                 CURLOPT_DNS_CACHE_TIMEOUT => 3600, // Cache DNS for 1 hour
                 CURLOPT_RESOLVE => [], // Will be set per request if needed
+                CURLOPT_TCP_KEEPALIVE => 1, // Enable TCP keepalive
+                CURLOPT_TCP_KEEPIDLE => 60, // Start keepalive after 60 seconds
+                CURLOPT_TCP_KEEPINTVL => 10, // Keepalive interval
+            ],
+            'http_errors' => false, // We handle errors manually
+            'allow_redirects' => [
+                'max' => 5,
+                'strict' => true,
+                'referer' => true,
             ],
         ]);
     }
@@ -95,6 +119,48 @@ class FlutterwaveService
 
         if (empty($config['public_key'])) {
             throw new FlutterwaveException('Flutterwave public key is required');
+        }
+
+        // Validate base_url to prevent SSRF attacks
+        if (!empty($config['base_url'])) {
+            $this->validateBaseUrl($config['base_url']);
+        }
+    }
+
+    /**
+     * Validate base URL to prevent SSRF attacks.
+     *
+     * @param  string  $url
+     * @return void
+     * @throws \AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException
+     */
+    protected function validateBaseUrl(string $url): void
+    {
+        // Only allow HTTPS URLs
+        if (!preg_match('/^https:\/\//i', $url)) {
+            throw new FlutterwaveException('Base URL must use HTTPS protocol');
+        }
+
+        // Whitelist allowed domains
+        $allowedDomains = [
+            'api.flutterwave.com',
+            'api.flutterwave.dev',
+        ];
+
+        $parsedUrl = parse_url($url);
+        $host = $parsedUrl['host'] ?? '';
+
+        // Check if host matches allowed domains
+        $isAllowed = false;
+        foreach ($allowedDomains as $allowedDomain) {
+            if ($host === $allowedDomain || substr($host, -strlen('.' . $allowedDomain)) === '.' . $allowedDomain) {
+                $isAllowed = true;
+                break;
+            }
+        }
+
+        if (!$isAllowed) {
+            throw new FlutterwaveException('Base URL must be from an allowed Flutterwave domain');
         }
     }
 
@@ -117,6 +183,25 @@ class FlutterwaveService
     }
 
     /**
+     * Get OAuth client instance (reused for performance).
+     *
+     * @return \GuzzleHttp\Client
+     */
+    protected function getOAuthClient(): Client
+    {
+        if ($this->oauthClient === null) {
+            $this->oauthClient = new Client([
+                'base_uri' => 'https://idp.flutterwave.com/',
+                'timeout' => $this->config['timeout'] ?? 30,
+                'connect_timeout' => 10,
+                'http_errors' => false,
+            ]);
+        }
+
+        return $this->oauthClient;
+    }
+
+    /**
      * Get OAuth 2.0 access token for v4 API.
      *
      * @return string
@@ -129,37 +214,66 @@ class FlutterwaveService
             return $this->accessToken;
         }
 
-        try {
-            $oauthClient = new Client([
-                'base_uri' => 'https://idp.flutterwave.com/',
-                'timeout' => $this->config['timeout'] ?? 30,
-            ]);
+        $maxRetries = 3;
+        $retryDelay = 1; // Start with 1 second
 
-            $response = $oauthClient->post('realms/flutterwave/protocol/openid-connect/token', [
-                'headers' => [
-                    'Content-Type' => 'application/x-www-form-urlencoded',
-                ],
-                'form_params' => [
-                    'client_id' => trim($this->config['public_key']),
-                    'client_secret' => trim($this->config['secret_key']),
-                    'grant_type' => 'client_credentials',
-                ],
-            ]);
+        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+            try {
+                $oauthClient = $this->getOAuthClient();
 
-            $body = json_decode($response->getBody()->getContents(), true);
+                $response = $oauthClient->post('realms/flutterwave/protocol/openid-connect/token', [
+                    'headers' => [
+                        'Content-Type' => 'application/x-www-form-urlencoded',
+                    ],
+                    'form_params' => [
+                        'client_id' => trim($this->config['public_key']),
+                        'client_secret' => trim($this->config['secret_key']),
+                        'grant_type' => 'client_credentials',
+                    ],
+                ]);
 
-            if (!isset($body['access_token'])) {
-                throw new FlutterwaveException('Failed to obtain access token: ' . ($body['error_description'] ?? 'Unknown error'));
+                $statusCode = $response->getStatusCode();
+                if ($statusCode < 200 || $statusCode >= 300) {
+                    throw new FlutterwaveException("OAuth request failed with status code: {$statusCode}");
+                }
+
+                $body = json_decode($response->getBody()->getContents(), true);
+
+                // Validate token response structure
+                if (!is_array($body)) {
+                    throw new FlutterwaveException('Invalid OAuth token response format');
+                }
+
+                if (!isset($body['access_token']) || empty($body['access_token'])) {
+                    $errorDescription = $body['error_description'] ?? $body['error'] ?? 'Unknown error';
+                    throw new FlutterwaveException('Failed to obtain access token: ' . $errorDescription);
+                }
+
+                if (!isset($body['expires_in']) || !is_numeric($body['expires_in'])) {
+                    throw new FlutterwaveException('Invalid token expiration time in OAuth response');
+                }
+
+                $this->accessToken = $body['access_token'];
+                // Token expires in specified time, but we'll refresh 1 minute early
+                $this->tokenExpiresAt = time() + (int)$body['expires_in'] - 60;
+
+                return $this->accessToken;
+            } catch (GuzzleException $e) {
+                // If this is the last attempt, throw the exception
+                if ($attempt === $maxRetries) {
+                    throw new FlutterwaveException('Failed to authenticate with Flutterwave after ' . $maxRetries . ' attempts: ' . $e->getMessage(), 0, $e);
+                }
+
+                // Exponential backoff: wait before retrying
+                sleep($retryDelay);
+                $retryDelay *= 2; // Double the delay for next retry
+            } catch (FlutterwaveException $e) {
+                // Re-throw FlutterwaveException immediately (no retry for validation errors)
+                throw $e;
             }
-
-            $this->accessToken = $body['access_token'];
-            // Token expires in 10 minutes, but we'll refresh 1 minute early
-            $this->tokenExpiresAt = time() + ($body['expires_in'] ?? 600) - 60;
-
-            return $this->accessToken;
-        } catch (GuzzleException $e) {
-            throw new FlutterwaveException('Failed to authenticate with Flutterwave: ' . $e->getMessage(), 0, $e);
         }
+
+        throw new FlutterwaveException('Failed to obtain access token after ' . $maxRetries . ' attempts');
     }
 
     /**
@@ -214,6 +328,30 @@ class FlutterwaveService
     }
 
     /**
+     * Validate transaction ID to prevent injection attacks.
+     *
+     * @param  string|int  $transactionId
+     * @return string
+     * @throws \AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException
+     */
+    protected function validateTransactionId($transactionId): string
+    {
+        $id = (string) $transactionId;
+        
+        // Only allow alphanumeric characters, hyphens, and underscores
+        if (!preg_match('/^[a-zA-Z0-9_-]+$/', $id)) {
+            throw new FlutterwaveException('Invalid transaction ID format');
+        }
+
+        // Limit length to prevent buffer overflow attacks
+        if (strlen($id) > 100) {
+            throw new FlutterwaveException('Transaction ID exceeds maximum length');
+        }
+
+        return $id;
+    }
+
+    /**
      * Sanitize endpoint to prevent path traversal and SSRF attacks.
      *
      * @param  string  $endpoint
@@ -225,14 +363,28 @@ class FlutterwaveService
         // Remove leading/trailing slashes and normalize
         $endpoint = trim($endpoint, '/');
         
-        // Prevent path traversal attempts
-        if (strpos($endpoint, '..') !== false || strpos($endpoint, '//') !== false) {
-            throw new FlutterwaveException('Invalid endpoint path');
+        // Prevent path traversal attempts (enhanced)
+        if (str_contains($endpoint, '..') || 
+            str_contains($endpoint, '//') || 
+            str_contains($endpoint, '\\') ||
+            str_contains($endpoint, '%2e%2e') || // URL encoded ..
+            str_contains($endpoint, '%2f%2f')) { // URL encoded //
+            throw new FlutterwaveException('Invalid endpoint path: path traversal detected');
         }
 
         // Ensure endpoint doesn't start with http:// or https:// (SSRF protection)
         if (preg_match('/^https?:\/\//i', $endpoint)) {
             throw new FlutterwaveException('Invalid endpoint: absolute URLs not allowed');
+        }
+
+        // Block other dangerous protocols
+        if (preg_match('/^(file|ftp|gopher|ldap|data):/i', $endpoint)) {
+            throw new FlutterwaveException('Invalid endpoint: dangerous protocol detected');
+        }
+
+        // Limit endpoint length
+        if (strlen($endpoint) > 500) {
+            throw new FlutterwaveException('Invalid endpoint: exceeds maximum length');
         }
 
         return $endpoint;
@@ -254,7 +406,7 @@ class FlutterwaveService
             
             // Check if key contains sensitive information
             foreach ($sensitiveKeys as $sensitive) {
-                if (strpos($lowerKey, $sensitive) !== false) {
+                if (str_contains($lowerKey, $sensitive)) {
                     $sanitized[$key] = '***REDACTED***';
                     break;
                 }
@@ -285,7 +437,7 @@ class FlutterwaveService
             $endpoint = $this->sanitizeEndpoint($endpoint);
 
             // Get authentication token (OAuth 2.0 for v4, Bearer token for v3)
-            $isV4 = strpos($this->baseUrl, '/v4/') !== false;
+            $isV4 = str_contains($this->baseUrl, '/v4/');
             if (!isset($options['headers'])) {
                 $options['headers'] = [];
             }
@@ -316,7 +468,8 @@ class FlutterwaveService
             }
 
             $response = $this->client->request($method, $endpoint, $options);
-            $body = json_decode($response->getBody()->getContents(), true);
+            $responseBody = $response->getBody()->getContents();
+            $body = json_decode($responseBody, true);
 
             if ($this->config['log_requests'] ?? false) {
                 // Sanitize response data before logging
@@ -355,11 +508,16 @@ class FlutterwaveService
                 $message = 'Flutterwave API request failed';
                 
                 try {
-                    $body = json_decode($response->getBody()->getContents(), true);
-                    if (isset($body['message']) && !empty($body['message'])) {
-                        $message = $body['message'];
-                    } elseif (isset($body['data']['message'])) {
-                        $message = $body['data']['message'];
+                    // Read response body once and reuse
+                    $errorBodyContent = $response->getBody()->getContents();
+                    $errorBody = json_decode($errorBodyContent, true);
+                    
+                    if (is_array($errorBody)) {
+                        if (isset($errorBody['message']) && !empty($errorBody['message'])) {
+                            $message = $errorBody['message'];
+                        } elseif (isset($errorBody['data']['message'])) {
+                            $message = $errorBody['data']['message'];
+                        }
                     }
                 } catch (\Exception $ex) {
                     // If we can't parse the response, use generic message
@@ -373,9 +531,9 @@ class FlutterwaveService
             $code = method_exists($e, 'getCode') ? $e->getCode() : 0;
             
             // Provide more helpful error messages for common connection issues
-            if (strpos($errorMessage, 'cURL error') !== false || 
-                strpos($errorMessage, 'Connection') !== false ||
-                strpos($errorMessage, 'timeout') !== false) {
+            if (str_contains($errorMessage, 'cURL error') || 
+                str_contains($errorMessage, 'Connection') ||
+                str_contains($errorMessage, 'timeout')) {
                 $message = "Flutterwave API connection failed: {$errorMessage}. Please check your network connection and API endpoint.";
             } else {
                 $message = "Flutterwave API request failed: {$errorMessage}";
@@ -412,7 +570,7 @@ class FlutterwaveService
      */
     public function payment(): PaymentService
     {
-        return new PaymentService($this);
+        return $this->serviceCache['payment'] ??= new PaymentService($this);
     }
 
     /**
@@ -422,7 +580,7 @@ class FlutterwaveService
      */
     public function transfer(): TransferService
     {
-        return new TransferService($this);
+        return $this->serviceCache['transfer'] ??= new TransferService($this);
     }
 
     /**
@@ -432,7 +590,7 @@ class FlutterwaveService
      */
     public function subscription(): SubscriptionService
     {
-        return new SubscriptionService($this);
+        return $this->serviceCache['subscription'] ??= new SubscriptionService($this);
     }
 
     /**
@@ -442,7 +600,7 @@ class FlutterwaveService
      */
     public function webhook(): WebhookService
     {
-        return new WebhookService($this);
+        return $this->serviceCache['webhook'] ??= new WebhookService($this);
     }
 
     /**
@@ -452,7 +610,7 @@ class FlutterwaveService
      */
     public function verification(): AccountVerificationService
     {
-        return new AccountVerificationService($this);
+        return $this->serviceCache['verification'] ??= new AccountVerificationService($this);
     }
 
     /**
@@ -462,7 +620,7 @@ class FlutterwaveService
      */
     public function virtualAccount(): VirtualAccountService
     {
-        return new VirtualAccountService($this);
+        return $this->serviceCache['virtualAccount'] ??= new VirtualAccountService($this);
     }
 }
 

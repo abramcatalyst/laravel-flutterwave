@@ -49,6 +49,17 @@
             }
         }
     },
+    "scripts": {
+        "post-install-cmd": [
+            "@php -r \"if (file_exists('vendor/laravel/framework/src/Illuminate/Foundation/Console/Kernel.php')) { echo 'Run: php artisan flutterwave:health-check to verify installation\\n'; }\""
+        ],
+        "post-update-cmd": [
+            "@php -r \"if (file_exists('vendor/laravel/framework/src/Illuminate/Foundation/Console/Kernel.php')) { echo 'Run: php artisan flutterwave:health-check to verify installation\\n'; }\""
+        ],
+        "test": [
+            "@php -r \"echo 'Run: php artisan flutterwave:health-check to verify installation\\n';\""
+        ]
+    },
     "minimum-stability": "dev",
     "prefer-stable": true
 }

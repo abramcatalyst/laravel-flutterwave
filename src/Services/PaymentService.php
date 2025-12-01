@@ -43,7 +43,8 @@ class PaymentService
      */
     public function verify($transactionId): array
     {
-        return $this->flutterwave->get("transactions/{$transactionId}/verify");
+        $validatedId = $this->validateTransactionId($transactionId);
+        return $this->flutterwave->get("transactions/{$validatedId}/verify");
     }
 
     /**
@@ -54,7 +55,8 @@ class PaymentService
      */
     public function getTransaction($transactionId): array
     {
-        return $this->flutterwave->get("transactions/{$transactionId}");
+        $validatedId = $this->validateTransactionId($transactionId);
+        return $this->flutterwave->get("transactions/{$validatedId}");
     }
 
     /**
@@ -98,7 +100,8 @@ class PaymentService
      */
     public function resendWebhook($transactionId): array
     {
-        return $this->flutterwave->post("transactions/{$transactionId}/resend-webhook");
+        $validatedId = $this->validateTransactionId($transactionId);
+        return $this->flutterwave->post("transactions/{$validatedId}/resend-webhook");
     }
 
     /**
@@ -120,7 +123,32 @@ class PaymentService
      */
     public function getRefund($refundId): array
     {
-        return $this->flutterwave->get("refunds/{$refundId}");
+        $validatedId = $this->validateTransactionId($refundId);
+        return $this->flutterwave->get("refunds/{$validatedId}");
+    }
+
+    /**
+     * Validate transaction ID to prevent injection attacks.
+     *
+     * @param  string|int  $transactionId
+     * @return string
+     * @throws \AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException
+     */
+    protected function validateTransactionId($transactionId): string
+    {
+        $id = (string) $transactionId;
+        
+        // Only allow alphanumeric characters, hyphens, and underscores
+        if (!preg_match('/^[a-zA-Z0-9_-]+$/', $id)) {
+            throw new \AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException('Invalid transaction ID format');
+        }
+
+        // Limit length to prevent buffer overflow attacks
+        if (strlen($id) > 100) {
+            throw new \AbramCatalyst\Flutterwave\Exceptions\FlutterwaveException('Transaction ID exceeds maximum length');
+        }
+
+        return $id;
     }
 
     /**

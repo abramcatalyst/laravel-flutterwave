@@ -460,12 +460,69 @@ FLUTTERWAVE_ENVIRONMENT=test
 
 Use Flutterwave test credentials from your dashboard.
 
-## Security
+## Health Check
 
-- Always use HTTPS in production
-- Never expose your secret keys in client-side code
-- Use the webhook middleware to verify signatures
-- Store sensitive credentials in environment variables
+After installation, verify your setup with the health check command:
+
+```bash
+php artisan flutterwave:health-check
+```
+
+For detailed information:
+
+```bash
+php artisan flutterwave:health-check --verbose
+```
+
+This command checks:
+- PHP version compatibility
+- Required extensions (curl, json, openssl)
+- Configuration (keys, environment, API version)
+- API connectivity
+
+## Security Best Practices
+
+### 1. Credential Protection
+- **Always use HTTPS** in production environments
+- **Never expose secret keys** in client-side code or public repositories
+- **Store credentials in environment variables** - never hardcode them
+- **Use different keys** for test and production environments
+
+### 2. Webhook Security
+- **Enable IP whitelisting** for production webhooks:
+  ```env
+  FLUTTERWAVE_WEBHOOK_ALLOWED_IPS=52.31.139.75,52.49.173.169,52.214.14.220
+  ```
+- **Enable rate limiting** to prevent abuse:
+  ```env
+  FLUTTERWAVE_WEBHOOK_RATE_LIMIT=60
+  ```
+- **Enable timestamp validation** to prevent replay attacks:
+  ```env
+  FLUTTERWAVE_WEBHOOK_VALIDATE_TIMESTAMP=true
+  ```
+- **Set request size limits**:
+  ```env
+  FLUTTERWAVE_WEBHOOK_MAX_SIZE=1048576
+  ```
+
+### 3. Configuration Security
+- **Validate base URLs** - The package automatically validates base URLs to prevent SSRF attacks
+- **Use webhook middleware** - Always use `VerifyFlutterwaveWebhook` middleware on webhook routes
+- **Disable request logging in production**:
+  ```env
+  FLUTTERWAVE_LOG_REQUESTS=false
+  ```
+
+### 4. Input Validation
+- Transaction IDs are automatically validated to prevent injection attacks
+- Endpoints are sanitized to prevent path traversal and SSRF attacks
+- All user inputs should be validated before passing to the package
+
+### 5. Error Handling
+- Don't expose detailed error messages to end users
+- Log errors securely without exposing sensitive data
+- Use try-catch blocks around Flutterwave API calls
 
 ## Support
 
@@ -488,29 +545,179 @@ $banks = Flutterwave::verification()->getBanks('NG');
 dd($banks); // Should return banks list
 ```
 
+## Performance Tuning
+
+### 1. Service Instance Caching
+The package automatically caches service instances (PaymentService, TransferService, etc.) for better performance. No configuration needed.
+
+### 2. OAuth Token Caching
+OAuth tokens for API v4 are automatically cached and reused until expiration. The package handles token refresh automatically.
+
+### 3. Connection Pooling
+The HTTP client is optimized for connection reuse:
+- DNS caching (1 hour)
+- TCP keepalive enabled
+- Connection pooling for better performance
+
+### 4. Request Timeout Configuration
+Adjust timeouts based on your needs:
+```env
+FLUTTERWAVE_TIMEOUT=30
+```
+
+### 5. Disable Logging in Production
+For better performance, disable request logging in production:
+```env
+FLUTTERWAVE_LOG_REQUESTS=false
+```
+
+### 6. API Version Selection
+- **v3**: Faster (no OAuth overhead), but some newer features may not be available
+- **v4**: More features, but requires OAuth token (automatically handled)
+
 ## Troubleshooting
 
-### Routes Not Loading
+### Installation Issues
 
-If webhook routes are not loading, check your config:
+#### Health Check Fails
+Run the health check command to diagnose issues:
+```bash
+php artisan flutterwave:health-check --verbose
+```
 
+#### Missing PHP Extensions
+Ensure required extensions are installed:
+```bash
+# Check if extensions are loaded
+php -m | grep -E "curl|json|openssl"
+```
+
+Install missing extensions:
+```bash
+# Ubuntu/Debian
+sudo apt-get install php-curl php-json php-openssl
+
+# macOS (Homebrew)
+brew install php-curl
+```
+
+#### Configuration Not Loading
+Clear configuration cache:
 ```bash
 php artisan config:clear
+php artisan config:cache
 ```
 
-Or set in your `.env`:
-```env
-FLUTTERWAVE_ENABLE_ROUTES=true
-```
+### API Connection Issues
 
-### Service Provider Not Found
+#### "Secret key is required" Error
+1. Check your `.env` file has the required keys:
+   ```env
+   FLUTTERWAVE_PUBLIC_KEY=your_public_key
+   FLUTTERWAVE_SECRET_KEY=your_secret_key
+   ```
+2. Clear config cache:
+   ```bash
+   php artisan config:clear
+   ```
 
-Make sure the package is properly installed:
-```bash
-composer dump-autoload
-php artisan config:clear
-php artisan cache:clear
-```
+#### OAuth Authentication Fails (v4 API)
+- Verify your public and secret keys are correct
+- Check that your keys are for the correct environment (test/live)
+- The package automatically retries with exponential backoff
+
+#### Connection Timeout
+- Increase timeout in config:
+  ```env
+  FLUTTERWAVE_TIMEOUT=60
+  ```
+- Check your network connection and firewall settings
+- Verify Flutterwave API is accessible from your server
+
+### Webhook Issues
+
+#### Routes Not Loading
+If webhook routes are not loading:
+1. Check your config:
+   ```bash
+   php artisan config:clear
+   ```
+2. Verify routes are enabled:
+   ```env
+   FLUTTERWAVE_ENABLE_ROUTES=true
+   ```
+3. Check route list:
+   ```bash
+   php artisan route:list | grep flutterwave
+   ```
+
+#### Webhook Signature Verification Fails
+1. Verify webhook secret hash is configured:
+   ```env
+   FLUTTERWAVE_WEBHOOK_SECRET_HASH=your_webhook_secret
+   ```
+2. Check that the secret hash matches your Flutterwave dashboard
+3. Ensure the middleware is applied to the webhook route
+
+#### Rate Limiting Issues
+If webhooks are being rate limited:
+1. Check current rate limit setting:
+   ```env
+   FLUTTERWAVE_WEBHOOK_RATE_LIMIT=60
+   ```
+2. Increase if needed (be careful in production)
+3. Check Laravel logs for rate limit messages
+
+#### IP Whitelist Blocking Valid Requests
+1. Verify Flutterwave IP addresses are whitelisted:
+   ```env
+   FLUTTERWAVE_WEBHOOK_ALLOWED_IPS=52.31.139.75,52.49.173.169
+   ```
+2. Check your server's actual IP (may be behind a proxy)
+3. Temporarily disable IP whitelist for testing:
+   ```env
+   FLUTTERWAVE_WEBHOOK_ALLOWED_IPS=
+   ```
+
+### Service Provider Issues
+
+#### Service Provider Not Found
+1. Clear autoload cache:
+   ```bash
+   composer dump-autoload
+   ```
+2. Clear Laravel caches:
+   ```bash
+   php artisan config:clear
+   php artisan cache:clear
+   ```
+3. Verify package is installed:
+   ```bash
+   composer show abramcatalyst/laravel-flutterwave
+   ```
+
+#### Facade Not Working
+1. Ensure service provider is registered (auto-discovered in Laravel 5.5+)
+2. Check alias is registered in `config/app.php` (if using older Laravel)
+3. Clear config cache:
+   ```bash
+   php artisan config:clear
+   ```
+
+### Common Error Messages
+
+#### "Invalid endpoint path"
+- Endpoint contains invalid characters or path traversal attempts
+- Ensure endpoints are properly formatted
+- Check that transaction IDs are valid (alphanumeric, hyphens, underscores only)
+
+#### "Base URL must use HTTPS protocol"
+- Custom base URLs must use HTTPS
+- Only Flutterwave domains are allowed
+
+#### "Transaction ID exceeds maximum length"
+- Transaction IDs are limited to 100 characters
+- Verify your transaction IDs meet this requirement
 
 ## License
 

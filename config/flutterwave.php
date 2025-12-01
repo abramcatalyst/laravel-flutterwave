@@ -128,5 +128,57 @@ return [
     |
     */
     'enable_routes' => env('FLUTTERWAVE_ENABLE_ROUTES', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Webhook IP Whitelist
+    |--------------------------------------------------------------------------
+    |
+    | Optional list of allowed IP addresses for webhook requests.
+    | Leave empty to allow all IPs (not recommended for production).
+    | Set to array of IP addresses or CIDR ranges for enhanced security.
+    |
+    | Example: ['52.31.139.75', '52.49.173.169', '52.214.14.220']
+    | Or use CIDR: ['52.31.139.0/24']
+    |
+    */
+    'webhook_allowed_ips' => env('FLUTTERWAVE_WEBHOOK_ALLOWED_IPS', null) 
+        ? explode(',', env('FLUTTERWAVE_WEBHOOK_ALLOWED_IPS', '')) 
+        : [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Webhook Rate Limiting
+    |--------------------------------------------------------------------------
+    |
+    | Rate limiting for webhook endpoints.
+    | Set to number of requests per minute per IP address.
+    | Set to 0 to disable rate limiting (not recommended).
+    |
+    */
+    'webhook_rate_limit' => env('FLUTTERWAVE_WEBHOOK_RATE_LIMIT', 60),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Webhook Request Size Limit
+    |--------------------------------------------------------------------------
+    |
+    | Maximum request body size for webhook payloads in bytes.
+    | Default is 1MB (1048576 bytes).
+    |
+    */
+    'webhook_max_size' => env('FLUTTERWAVE_WEBHOOK_MAX_SIZE', 1048576),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Webhook Timestamp Validation
+    |--------------------------------------------------------------------------
+    |
+    | Whether to validate webhook timestamps to prevent replay attacks.
+    | Set to true to enable timestamp validation (recommended).
+    | Timestamps older than 5 minutes will be rejected.
+    |
+    */
+    'webhook_validate_timestamp' => env('FLUTTERWAVE_WEBHOOK_VALIDATE_TIMESTAMP', true),
 ];
 

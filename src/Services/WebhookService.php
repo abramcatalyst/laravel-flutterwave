@@ -66,7 +66,7 @@ class WebhookService
             $lowerKey = strtolower($key);
             
             foreach ($sensitiveKeys as $sensitive) {
-                if (strpos($lowerKey, $sensitive) !== false) {
+                if (str_contains($lowerKey, $sensitive)) {
                     $sanitized[$key] = '***REDACTED***';
                     break;
                 }
